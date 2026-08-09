@@ -91,6 +91,9 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
+    # Static self-hosting contracts and endpoint-probe unit tests do not need DB.
+    "tests/scripts/test_self_hosted_agent_memory.py",
+    "tests/scripts/test_configure_embeddings_endpoint.py",
 )
 
 _LIVE_LLM_MARKER = "live_llm"

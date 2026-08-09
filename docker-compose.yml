@@ -1,0 +1,113 @@
+# Self-hosted Honcho stack for the honcho-manage/remember/recall agent skills.
+#
+# The host agent (Codex or Claude) extracts atomic facts. Honcho persists and
+# retrieves them. A dedicated Hugging Face TEI service runs multilingual
+# MiniLM directly; no general-purpose model manager or cloud LLM API is used.
+
+name: honcho-memory
+
+x-honcho-environment: &honcho-environment
+  DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@database:5432/honcho
+  CACHE_URL: redis://redis:6379/0?suppress=true
+  CACHE_ENABLED: "true"
+  AUTH_USE_AUTH: "false"
+  EMBED_MESSAGES: "false"
+  EMBEDDING_VECTOR_DIMENSIONS: "384"
+  EMBEDDING_MODEL_CONFIG__TRANSPORT: openai
+  EMBEDDING_MODEL_CONFIG__MODEL: ${HONCHO_EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+  EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE: never
+  EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL: http://embeddings:80/v1
+  EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY: tei-local
+  HONCHO_CONFIGURE_EMBEDDINGS: "true"
+  DERIVER_ENABLED: "false"
+  SUMMARY_ENABLED: "false"
+  DREAM_ENABLED: "false"
+  PEER_CARD_ENABLED: "false"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["sh", "docker/entrypoint.sh"]
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8787:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    environment: *honcho-environment
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  database:
+    image: pgvector/pgvector:pg15
+    ports:
+      - "127.0.0.1:5432:5432"
+    command: ["postgres", "-c", "max_connections=100"]
+    environment:
+      POSTGRES_DB: honcho
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d honcho"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.2
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  embeddings:
+    image: ${HONCHO_EMBEDDING_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-latest}
+    command:
+      - --model-id
+      - /models/embedding
+      - --served-model-name
+      - ${HONCHO_EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      - --pooling
+      - mean
+      - --auto-truncate
+    volumes:
+      - ${HONCHO_EMBEDDING_MODEL_PATH:-./models/paraphrase-multilingual-MiniLM-L12-v2-tei}:/models/embedding:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:80/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 180
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redis-data:

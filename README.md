@@ -276,7 +276,49 @@ Honcho's evals span LongMemEval, LoCoMo, and other long-conversation benchmarks.
 
 Honcho is open source under AGPL-3.0. You can run the full server locally with Docker, then point the SDKs at `http://localhost:8000`.
 
-### Quick start (Docker)
+### Fully local memory for Codex and Claude
+
+The root [`docker-compose.yml`](./docker-compose.yml) is a self-contained memory
+profile for the `honcho-manage`, `honcho-remember`, and `honcho-recall` agent
+skills. It starts Honcho on `http://localhost:8787`, PostgreSQL with pgvector,
+Redis, and a dedicated Hugging Face Text Embeddings Inference service that
+loads `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` directly.
+There is no Ollama layer. The model supports 50 languages and produces
+384-dimensional vectors, and the stack configures pgvector to match.
+
+Codex or Claude extracts atomic facts before storing them. Honcho's deriver,
+summary, dream, and peer-card generation are disabled in this profile, and no
+OpenAI, Anthropic, or Gemini API key is configured or required.
+
+```bash
+cp .env.template .env
+uvx hf download sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 \
+  --local-dir ./models/paraphrase-multilingual-MiniLM-L12-v2-tei \
+  --include '*.json' --include '*.safetensors' --include '*.model' \
+  --include '1_Pooling/*'
+docker compose up -d --build
+curl http://localhost:8787/health
+```
+
+The model is downloaded outside Compose and mounted read-only into TEI, so the
+container does not need Hugging Face network access. The database is persisted
+in a named Docker volume. Changing the
+embedding model or dimension on a populated deployment is intentionally blocked;
+create a fresh deployment and replay the memories instead.
+
+The default TEI image targets Apple Silicon/aarch64. For x86_64 Linux, set
+`HONCHO_EMBEDDING_IMAGE=ghcr.io/huggingface/text-embeddings-inference:cpu-1.9`
+in `.env` before starting the stack.
+
+`HONCHO_EMBEDDING_IMAGE` selects the TEI runtime container;
+`HONCHO_EMBEDDING_MODEL` is the API-visible model name; and
+`HONCHO_EMBEDDING_MODEL_PATH` is its host directory. They are separate because
+a Hugging Face model repository is not a container image.
+
+To use the external `honcho-*` skills from this checkout, set
+`HONCHO_HOME` to the repository root or run their setup command from this root.
+
+### Full Honcho quick start (provider-backed reasoning)
 
 ```bash
 git clone https://github.com/plastic-labs/honcho.git

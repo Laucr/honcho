@@ -6,7 +6,8 @@ api/docker-compose.yml
 *.db
 data
 redis-data
-docker-compose.yml
+# The root Compose file is the supported self-hosted agent-memory stack.
+# Nested/local Compose overrides remain ignored by their own patterns.
 compose.yml
 
 
@@ -193,6 +194,11 @@ metrics.jsonl
 AGENTS.md
 lancedb_data/
 grafana-data/
+models/
 
 # Claude Code addon stuff
 .omc
+.claude
+!.claude/skills/*
+
+session.json

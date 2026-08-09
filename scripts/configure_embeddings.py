@@ -6,6 +6,7 @@ Usage::
     uv run python scripts/configure_embeddings.py --dry-run    # print intent, no DB write
     uv run python scripts/configure_embeddings.py --yes        # apply without prompt
     uv run python scripts/configure_embeddings.py --report     # full external-store inventory
+    uv run python scripts/configure_embeddings.py --yes --verify-endpoint
 
 The bootstrap sequence for a self-hosted install is:
 
@@ -56,6 +57,35 @@ _EMBEDDING_TABLES: tuple[str, ...] = ("documents", "message_embeddings")
 # model we currently care about, but validating once at the top of the
 # pipeline keeps the constraint explicit and the surface tight.
 _SAFE_IDENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+async def _verify_embedding_endpoint() -> None:
+    """Probe the configured embedding endpoint before touching pgvector.
+
+    The embedding client validates the returned vector length. Running this
+    probe before building or applying the schema plan prevents a bad endpoint,
+    missing model, or dimension mismatch from altering an otherwise healthy
+    database during self-hosted bootstrap.
+    """
+    from src.embedding_client import embedding_client
+
+    try:
+        embedding = await embedding_client.embed("Honcho embedding readiness probe")
+    except Exception as exc:
+        raise SystemExit(
+            "error: embedding endpoint verification failed; pgvector was not changed: "
+            + str(exc)
+        ) from exc
+
+    actual_dim = len(embedding)
+    expected_dim = settings.EMBEDDING.VECTOR_DIMENSIONS
+    if actual_dim != expected_dim:
+        raise SystemExit(
+            "error: embedding endpoint returned dimension "
+            + f"{actual_dim}, expected {expected_dim}; pgvector was not changed"
+        )
+
+    print(f"embedding endpoint: ok ({actual_dim} dimensions)")
 
 
 def _validate_identifier(name: str, *, kind: str) -> None:
@@ -401,6 +431,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print external-store namespace inventory and exit",
     )
+    parser.add_argument(
+        "--verify-endpoint",
+        action="store_true",
+        help="probe the configured embedding endpoint before inspecting or altering pgvector",
+    )
     return parser
 
 
@@ -422,6 +457,9 @@ async def _run_pipeline(args: argparse.Namespace) -> int:
     target_dim = settings.EMBEDDING.VECTOR_DIMENSIONS
     schema = settings.DB.SCHEMA
     _validate_identifier(schema, kind="DB.SCHEMA")
+
+    if args.verify_endpoint:
+        await _verify_embedding_endpoint()
 
     if args.report:
         return await _emit_report(engine, target_dim, is_report_mode=True)
